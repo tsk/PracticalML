@@ -1,0 +1,125 @@
+---
+title: "Practical Machine Learning"
+output: html_document
+---
+Background
+-----------
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The task of this project is to predict the manner in which they did the exercise.
+
+Getting and Cleaning the Data
+-----------------------------
+
+The first step consist in download and load the data.
+
+```{}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              "data/pml-training.csv",method="curl")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              "data/pml-testing.csv",method="curl")
+```
+```{r cache=TRUE}
+data <- read.csv("data/pml-training.csv",header = TRUE)
+evaluation <- read.csv("data//pml-testing.csv",header = TRUE)
+dim(data)
+dim(evaluation)
+```
+Both have the same dimensions. After a brief inspection on the data, we notice that there are a lot of columns filled(all/mostly) with NA values, which a na.omit command doesn works, because from 19622 observation we end with 406 complete observations. Then we proceed to remove that columns from both data sets.
+
+```{r}
+data <- data[,colSums(is.na(data))==0][,-c(1:7)]
+data <-data[,-grep("kurtosis|skewness|max|min|avg|stddev|var|amplitude",names(data))]
+evaluation <- evaluation[,colSums(is.na(evaluation))==0][,-c(1:7)]
+dim(data)
+dim(evaluation)
+```
+Next we need to be sure that the training data set and the evaluation data set are speaking the same language, i.e. have the same predictors.
+
+```{r}
+setdiff(names(data),names(evaluation))
+```
+The unique difference is in the name of the last column, wich in the evaluation data set instead of representing the problem id, but in the prediction phase this column is not used.
+
+Modeling
+---------
+From the given training set I got a training and testing set
+
+```{r echo=TRUE,message=FALSE,error=FALSE}
+library(caret)
+library(ggplot2)
+library(Hmisc)
+library(randomForest)
+library(e1071)
+library(knitr)
+library(gridExtra)
+set.seed(12345678)
+inTrain <- createDataPartition(data$classe,p=0.7,list = FALSE)
+training <- data[inTrain,]
+testing  <- data[-inTrain,]
+```
+
+The classifier selected is random Forest
+```{r cache=TRUE,message=FALSE,error=FALSE}
+modelFit <- randomForest(training[,-53],training[,53])
+```
+```{r}
+modelFit
+```
+
+To understand how much the variables selected add to the predective power of the model, I use the cross validation random forest (rfcv).
+
+```{r cache=TRUE,message=FALSE,error=FALSE}
+model <- rfcv(training[,-53],training[,53],cv.fold = 5, step = 0.5,scale="log")
+```
+
+```{r }
+qplot(model$n.var,model$error.cv,geom=c("point","line"))
+```
+```{r results='asis'}
+kable(data.frame(N=model$n.var,Error=model$error.cv))
+```
+
+And the importance of each variable is shown in the next table.
+
+```{r}
+varImportance <- importance(modelFit)
+varImportance  <- data.frame(variable= rownames(varImportance),
+                             MeanDecreaseGini=varImportance)
+
+row.names(varImportance) <- NULL
+varImportance <- varImportance[with(varImportance,order(-MeanDecreaseGini)),]
+table1 <- varImportance[c(1:15),]
+table2 <- varImportance[16:31,]
+table3 <- varImportance[32:47,]
+table4<- varImportance[48:52,]
+grid.arrange(tableGrob(table1),tableGrob(table2),ncol=2)
+grid.arrange(tableGrob(table3),tableGrob(table4),ncol=2)
+```
+
+Our model fit well on the training data set.
+
+```{r}
+predictions1 <- predict(modelFit, newdata=training)
+confusionMatrix(predictions1,training$classe)
+```
+
+```{r}
+predictions2 <- predict(modelFit, newdata=testing)
+error <- sum(predictions2!=testing$classe)/nrow(testing)*100
+confusionMatrix(predictions2,testing$classe)
+```
+The model applied to the test set give us an accuracy from 99.56%, thus the error in the test set (validation set) is less than 0.5% (\Sexpr{error}).
+
+20 test cases
+-------------
+```{r}
+testcases <- predict(modelFit, newdata=evaluation)
+kable(data.frame(problem_id=1:20,Class=testcases))
+```
+Conclusion
+-----------
+
+Even if the model shows a great predictive potential and accuracy, the concerns comes from the fact that we are working with a biased data, thus how this model will generalize to a data set with not only young an healthy people?
+
+There must be differences between beginners, intermediate and advanced users, also differences between genders and ages.
